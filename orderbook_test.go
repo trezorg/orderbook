@@ -3,7 +3,10 @@ package orderbook
 import (
 	"encoding/binary"
 	"math/rand"
+	"reflect"
+	"sort"
 	"testing"
+	"time"
 )
 
 func TestOrderBookWithNotEnoughAmount(t *testing.T) {
@@ -37,6 +40,9 @@ func TestOrderBookWithNotEnoughAmount(t *testing.T) {
 	if orderBook.Len() != 0 {
 		t.Errorf("expected order book length 0, got %v", orderBook.Len())
 	}
+	if len(hist) != 5 {
+		t.Errorf("expected history length 5, got %v", len(hist))
+	}
 	hist.Rollback()
 	if orderBook.Amount != initialAvailable {
 		t.Errorf("expected order book available amount after rollback %v, got %v", initialAvailable, orderBook.Amount)
@@ -48,16 +54,15 @@ func TestOrderBookWithNotEnoughAmount(t *testing.T) {
 
 func TestOrderBookWithEnoughAmount(t *testing.T) {
 	sellOrders := []SellOrder{
+		{Price: 40, Number: 2},
+		{Price: 50, Number: 1},
 		{Price: 10, Number: 5},
 		{Price: 20, Number: 4},
 		{Price: 30, Number: 3},
-		{Price: 40, Number: 2},
-		{Price: 50, Number: 1},
 	}
-	requiredAmount := uint(6)
+	requiredAmount := uint(10)
 	buyOrder := BuyOrder{Amount: requiredAmount}
-	orderBook := NewOrderBook()
-	orderBook.Sell(sellOrders...)
+	orderBook := NewOrderBook(sellOrders...)
 	initialAmount := orderBook.Amount
 	hist, result := orderBook.Buy(buyOrder)
 	if result.Amount != requiredAmount {
@@ -66,12 +71,15 @@ func TestOrderBookWithEnoughAmount(t *testing.T) {
 	if orderBook.Amount != initialAmount-result.Amount {
 		t.Errorf("expected order book available amount %v, got %v", orderBook.Amount, initialAmount-result.Amount)
 	}
-	if orderBook.Len() != 4 {
+	if orderBook.Len() != 3 {
 		t.Errorf("expected order book length 4, got %v", orderBook.Len())
 	}
-	expectedPrice := uint(5*10 + 20)
+	expectedPrice := uint(5*10 + 4*20 + 30)
 	if result.Price != expectedPrice {
 		t.Errorf("expected bought items price equal %v, got %v", expectedPrice, result.Price)
+	}
+	if len(hist) != 3 {
+		t.Errorf("expected history length 5, got %v", len(hist))
 	}
 	hist.Rollback()
 	if orderBook.Amount != initialAmount {
@@ -114,27 +122,65 @@ func TestOrderBookWithNoOrders(t *testing.T) {
 		t.Errorf("expected history length %v, got %v", 0, len(hist))
 	}
 }
+
+func TestOrderBookWithEqualPriceOrders(t *testing.T) {
+	sellOrders := []SellOrder{
+		{Price: 10, Number: 10},
+		{Price: 10, Number: 20},
+		{Price: 10, Number: 30},
+		{Price: 10, Number: 50},
+		{Price: 10, Number: 60},
+		{Price: 10, Number: 70},
+		{Price: 10, Number: 80},
+		{Price: 10, Number: 40},
+	}
+	requiredAmount := uint(95)
+	buyOrder := BuyOrder{Amount: requiredAmount}
+	orderBook := NewOrderBook(sellOrders...)
+	hist, _ := orderBook.Buy(buyOrder)
+	if len(hist) != 2 {
+		t.Errorf("expected history length 2, got %v", len(hist))
+	}
+	hist.Rollback()
+	sort.Slice(sellOrders, func(i, j int) bool {
+		if sellOrders[i].Price < sellOrders[j].Price {
+			return true
+		}
+		if sellOrders[i].Price > sellOrders[j].Price {
+			return false
+		}
+		return sellOrders[i].Number > sellOrders[j].Number
+	})
+	list := orderBook.book.List()
+	if !reflect.DeepEqual(sellOrders, list) {
+		t.Errorf("expected heap slice after rollback %v, got %v", sellOrders, list)
+	}
+}
+
 func BenchmarkOrderBook(b *testing.B) {
 
+	rand.Seed(time.Now().UnixNano())
 	randUint := func() uint {
 		b := make([]byte, 8)
 		rand.Read(b)
 		return uint(binary.LittleEndian.Uint64(b))
 	}
 
-	var sellOrders []SellOrder
+	sellOrders := make([]SellOrder, 10000)
 	for i := 0; i < 10000; i++ {
-		sellOrders = append(sellOrders, SellOrder{
+		sellOrders[i] = SellOrder{
 			Number: randUint(),
 			Price:  randUint(),
-		})
+		}
 	}
 	orderBook := NewOrderBook(sellOrders...)
-	buyOrder := BuyOrder{Amount: randUint()}
+	order := orderBook.book.Pick()
+	// first heap item would be enough to process the operation
+	buyOrder := BuyOrder{Amount: order.Number - 1}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		hist, _ := orderBook.Buy(buyOrder)
-		hist.Rollback()
+		h, _ := orderBook.Buy(buyOrder)
+		h.Rollback()
 	}
 }
