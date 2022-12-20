@@ -23,14 +23,28 @@ func (so SellOrder) Amount() uint {
 	return so.Number * so.Price
 }
 
-// Momento pattern
-type RollbackCommand func()
-type History []RollbackCommand
+type SellOrderRollback struct {
+	// position in heap
+	id int
+	SellOrder
+}
+
+func (sor SellOrderRollback) Rollback(ob *OrderBook) {
+	if sor.id == -1 {
+		ob.Sell(sor.SellOrder)
+	} else {
+		ob.book[sor.id].Number += sor.Number
+		ob.Amount += sor.Number
+		ob.book.up(sor.id)
+	}
+}
+
+type History []SellOrderRollback
 
 // Rollback undo commands in reverse order
-func (h History) Rollback() {
+func (h History) Rollback(ob *OrderBook) {
 	for i := len(h) - 1; i >= 0; i-- {
-		h[i]()
+		h[i].Rollback(ob)
 	}
 }
 
@@ -169,25 +183,15 @@ func (ob *OrderBook) Buy(bo BuyOrder) (History, Result) {
 	result := Result{}
 	for ob.book.Len() > 0 && result.Amount < bo.Amount {
 		order := ob.book.Pop()
-		available := min(order.Number, bo.Amount-result.Amount)
-		result.Amount += available
-		result.Price += available * order.Price
-		if order.Number > available {
-			order.Number -= available
+		amount := min(order.Number, bo.Amount-result.Amount)
+		result.Amount += amount
+		result.Price += amount * order.Price
+		if order.Number > amount {
+			order.Number -= amount
 			idx := ob.book.Push(order)
-			hist = append(hist, func(amount uint, idx int) func() {
-				return func() {
-					ob.book[idx].Number += available
-					ob.Amount += available
-					ob.book.up(idx)
-				}
-			}(available, idx))
+			hist = append(hist, SellOrderRollback{id: idx, SellOrder: SellOrder{Number: amount}})
 		} else {
-			hist = append(hist, func(order SellOrder) func() {
-				return func() {
-					ob.Sell(order)
-				}
-			}(order))
+			hist = append(hist, SellOrderRollback{id: -1, SellOrder: order})
 		}
 	}
 	ob.Amount -= result.Amount

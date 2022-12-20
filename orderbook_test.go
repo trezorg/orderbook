@@ -43,7 +43,7 @@ func TestOrderBookWithNotEnoughAmount(t *testing.T) {
 	if len(hist) != 5 {
 		t.Errorf("expected history length 5, got %v", len(hist))
 	}
-	hist.Rollback()
+	hist.Rollback(&orderBook)
 	if orderBook.Amount != initialAvailable {
 		t.Errorf("expected order book available amount after rollback %v, got %v", initialAvailable, orderBook.Amount)
 	}
@@ -81,7 +81,7 @@ func TestOrderBookWithEnoughAmount(t *testing.T) {
 	if len(hist) != 3 {
 		t.Errorf("expected history length 5, got %v", len(hist))
 	}
-	hist.Rollback()
+	hist.Rollback(&orderBook)
 	if orderBook.Amount != initialAmount {
 		t.Errorf("expected order book available amount after rollback %v, got %v", initialAmount, orderBook.Amount)
 	}
@@ -141,7 +141,7 @@ func TestOrderBookWithEqualPriceOrders(t *testing.T) {
 	if len(hist) != 2 {
 		t.Errorf("expected history length 2, got %v", len(hist))
 	}
-	hist.Rollback()
+	hist.Rollback(&orderBook)
 	sort.Slice(sellOrders, func(i, j int) bool {
 		if sellOrders[i].Price < sellOrders[j].Price {
 			return true
@@ -175,12 +175,12 @@ func BenchmarkOrderBook(b *testing.B) {
 	}
 	orderBook := NewOrderBook(sellOrders...)
 	order := orderBook.book.Pick()
-	// first heap item would be enough to process the operation
-	buyOrder := BuyOrder{Amount: order.Number - 1}
+	// first 2 heap item would be enough to process the operation
+	buyOrder := BuyOrder{Amount: order.Number + 1}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		h, _ := orderBook.Buy(buyOrder)
-		h.Rollback()
+		h.Rollback(&orderBook)
 	}
 }
